@@ -4,3 +4,4 @@
 ## 3. train.py token input, make batch and train the model.
 ## 4. Note this is a draft version and I am trying new settings. The parameters may hide in somewhere so be very careful. :)
 ## 5. Anyone feels free to reach me.
+## 6. Good luck. :)
