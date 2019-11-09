@@ -1,1 +1,6 @@
-# summerization-with-seq2seq-implementing-pgn-and-coverage
+# summerization_with_seq2seq_implementing_pgn_and_coverage
+## 1. data_loader.py do purge data, segment sentence, add special token, train word2vec model and finally get embedding.
+## 2. model_layers.py and pgn.py define seq2seq model structure implementing coverage and p_gen almost without option.
+## 3. train.py token input, make batch and train the model.
+## 4. Note this is a draft version and I am trying new settings. The parameters may hide in somewhere so be very careful. :)
+## 5. Anyone feels free to reach me.
