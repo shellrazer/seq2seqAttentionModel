@@ -78,14 +78,15 @@ def get_segment(paths):
     userdict_path = paths['userdict_path']
     stop_words_path = paths['stop_words']
 
-    stopwords = []
-    with open(stop_words_path, encoding='utf-8', errors='ignore') as f:
-        for line in f.readlines():
-            stopwords.append(line.strip())
-        stopword_set = set(stopwords)
-        print('停顿词列表，stopwords中共有%d个元素' % len(stopwords))
-        print('停顿词集合，stopword_set中共有%d个元素' % len(stopword_set))
-        f.close()
+    # stopwords = []
+    # with open(stop_words_path, encoding='utf-8', errors='ignore') as f:
+    #     for line in f.readlines():
+    #         stopwords.append(line.strip())
+    #     stopword_set = set(stopwords)
+    #     print('停顿词列表，stopwords中共有%d个元素' % len(stopwords))
+    #     print('停顿词集合，stopword_set中共有%d个元素' % len(stopword_set))
+    #     f.close()
+    stopword_set = ['的','了','有']
     max_lens = []
     # data_segment_list holds segmented dataset data_segment_length holds length of each sample in dataset
     # max_lens hold the max input or output length of dataset, the order is consistent with paths
@@ -103,7 +104,7 @@ def get_segment(paths):
             cut_words = [word for word in jieba.cut(text) if word not in stopword_set]
             data_segment_list.append(cut_words)
             data_segment_length.append(len(cut_words))
-        max_len = int(np.mean(data_segment_length) + 2 * np.std(data_segment_length))
+        max_len = int(np.mean(data_segment_length) + 2*np.std(data_segment_length))
         max_lens.append(max_len)
         print('segment are belong to {path} has {len} samples, mean length of samples is {mean} and choice {max_len} '
               'as length of input'.format(path=data_in_path, len=len(data_segment_list),
@@ -238,12 +239,10 @@ def prepare_dataset(paths, max_lens):
     print('final w2v_model has vocabulary of ', len(w2v_model.wv.vocab))
     return w2v_model, max_lens
 
-def get_token(w2v_model, max_len, dataset, oovs=None):
+def get_token(w2v_model, max_len_x, dataset, oovs=None):
     """
-    input: word2vec model, length of each sample in dataset, dataset and its oov dataset
-    the oov is in-article oov eg. train_y oov is the oov of train_X
+    dataset, list of lists, number of samples*max_len_x; oovs, list of list, number of samples * len of oov(not fixed)
     return: tokenized dataset, tonkenized extended dataset(where unk is represented by extended index), dataset pad mask
-    (where pad position is 0)
     """
 
     vocab_size = len(w2v_model.wv.vocab)
@@ -256,9 +255,11 @@ def get_token(w2v_model, max_len, dataset, oovs=None):
     dataset_token = []
     dataset_extended_token = []
     dataset_pad_mask = []
-    if oovs != None:
+    if oovs is not None:
+        # [number of samples, len of unique oov words(not fix)]
         dataset_oov_dict = [list(set(oov)) for oov in oovs]
-        dataset_oov_len = [len(oov) for oov in dataset_oov_dict]
+        # [number of samples, 1]
+        dataset_oov_len = [len(oov) if oov != [''] else 0 for oov in dataset_oov_dict]
     else:
         dataset_oov_dict = []
         dataset_oov_len =[]
@@ -268,17 +269,17 @@ def get_token(w2v_model, max_len, dataset, oovs=None):
         oov_count = 0
         sample_token = []
         sample_extended_token = []
-        sample_pad_mask = [1 for _ in range(max_len)]
+        sample_pad_mask = [1 for _ in range(max_len_x)]
         for word_index, word in enumerate(sample):
             if word == '<UNK>':
-                sample_token.append(w2v_model.wv.vocab[word].index)
-                if oovs != None:
-                    oov_id = list(set(oovs[sample_index])).index(oovs[sample_index][oov_count])
+                sample_token.append(UNK_index)
+                if oovs is not None:
+                    oov_id = dataset_oov_dict[sample_index].index(oovs[sample_index][oov_count])
                     sample_extended_token.append(vocab_size + oov_id)
                     oov_count += 1   # oov_count count the #rd oov word
             elif word == '<PAD>':
-                sample_token.append(w2v_model.wv.vocab[word].index)
-                sample_extended_token.append(w2v_model.wv.vocab[word].index)
+                sample_token.append(PAD_index)
+                sample_extended_token.append(PAD_index)
                 sample_pad_mask[word_index] = 0
             else:
                 sample_token.append(w2v_model.wv.vocab[word].index)
@@ -292,12 +293,20 @@ def token_to_word(w2v_model, tokens, oov_dict):
 
     # oov is a word list oov_dict
 
-    TART_index = w2v_model.wv.vocab['<START>'].index
+    START_index = w2v_model.wv.vocab['<START>'].index
     STOP_index = w2v_model.wv.vocab['<STOP>'].index
     PAD_index = w2v_model.wv.vocab['<PAD>'].index
     UNK_index = w2v_model.wv.vocab['<UNK>'].index
     vocab_size = len(w2v_model.wv.vocab)
     word = ''
+    # if type(tokens) == int:
+    #     if tokens < vocab_size:
+    #         word = word + w2v_model.wv.index2word[tokens]
+    #     elif tokens < vocab_size + len(oov_dict):
+    #         word = word + oov_dict[tokens - vocab_size]
+    #     else:
+    #         word = word + "<UNK>"
+    # else:
     for token in tokens:
         if token < vocab_size:
             word = word + w2v_model.wv.index2word[token]
@@ -307,6 +316,7 @@ def token_to_word(w2v_model, tokens, oov_dict):
             word = word + "<UNK>"
         if token == STOP_index:
             break
+
     return word
 
 def get_embedding_matrix(w2v_model):
@@ -314,9 +324,10 @@ def get_embedding_matrix(w2v_model):
     embedding_dim = len(w2v_model.wv['<START>'])
     print('vocab_size, embedding_dim:', vocab_size, embedding_dim)
     embedding_matrix = np.zeros((vocab_size, embedding_dim))
+    print('start extract embedding matrix, may take long time')
     for i in range(vocab_size):
         embedding_matrix[i, :] = w2v_model.wv[w2v_model.wv.index2word[i]]
-        embedding_matrix = embedding_matrix.astype('float32')
+    embedding_matrix = embedding_matrix.astype('float32')
     assert embedding_matrix.shape == (vocab_size, embedding_dim)
     np.savetxt('embedding_matrix.txt', embedding_matrix, fmt='%0.8f')
     print('embedding matrix extracted')
@@ -350,8 +361,8 @@ def batch(BATCH_SIZE, test_size, input, extended_input, input_pad_mask, input_oo
     dataset_train = tf.data.Dataset.from_tensor_slices(
     (input_train, extended_input_train, input_pad_mask_train, input_oov_train_len, output_train, output_pad_mask_train))
     dataset_test = tf.data.Dataset.from_tensor_slices(
-        (input_test, extended_input_test, input_pad_mask_test, input_oov_test_len, output_test, output_pad_mask_test))
-    dataset_train_batch = dataset_train.batch(batch_size=BATCH_SIZE,drop_remainder=True)
+    (input_test, extended_input_test, input_pad_mask_test, input_oov_test_len, output_test, output_pad_mask_test))
+    dataset_train_batch = dataset_train.batch(batch_size=BATCH_SIZE, drop_remainder=True)
     dataset_test_batch = dataset_test.batch(batch_size=BATCH_SIZE, drop_remainder=True)
     return dataset_train_batch, dataset_test_batch, train_dataset_len, test_dataset_len, input_oov_train_dict, input_oov_test_dict
 
@@ -378,7 +389,7 @@ def main():
     data_generate(paths)
     max_lens = get_segment(paths)
     print(max_lens)
-    # max_lens = [241, 240, 31, 250]
+    # max_lens = [339, 337, 39, 355]
     # I am not sure max_lens really works. It do bypassed the oov problem.
     # tfidf_filter naively iterate every word in corpus, is extremely slow! !!!!!danger!!!!!! ~ 2 hour waiting
     # tfidf_filter overwrite the segment file, people can bypass this step and use segment file directly.
@@ -387,13 +398,13 @@ def main():
     max_lens[2] = tfidf_filter('./data/train_y_segment.txt', 0.75, 2, 0.1)   # 12279 -> 12267
     max_lens[3] = tfidf_filter('./data/test_X_segment.txt', 0.75, 2, 0.1)  # 22356 -> 18673
     print(max_lens)
-    # max_lens = [85, 85, 27, 85]
-    w2v_model, max_lens = prepare_dataset(paths, max_lens)  # vocab_sz 53359 -> 53363
-    print(max_lens)  #  [85, 87, 29, 87]
+    # max_lens = [98, 98, 32, 101]
+    w2v_model, max_lens = prepare_dataset(paths, max_lens)  # vocab_sz 53465 -> 53469
+    print(max_lens)  #  [98, 100, 34, 103]
     w2v_model = Word2Vec.load('./word2vec.model')
     #max_lens = [241, 87, 29, 87]
 
-    embedding_matrix = get_embedding_matrix(w2v_model) #vocab_size 25874 embedding_dim 256
+    embedding_matrix = get_embedding_matrix(w2v_model) #vocab_size 53469 embedding_dim 256
     #embedding_matrix = np.loadtxt('embedding_matrix.txt',dtype=np.float32)
     #print(np.sum(embedding_matrix - embedding_matrix_2))
 
