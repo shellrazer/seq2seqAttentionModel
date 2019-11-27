@@ -1,18 +1,14 @@
 import tensorflow as tf
 from pgn import PGN
-from data_loader import batch, get_token, token_to_word
+from data_loader import get_token, token_to_word
 import numpy as np
 from gensim.models import Word2Vec
 import os
-import time
-
-
 
 
 #@tf.function
 # decode for one batch or one beam_size
-def beam_decode(w2v_model, max_len_y, min_dec_length, beam_size, enc_inp, enc_extended_inp, enc_pad_mask, batch_oov_len, enc_oov_dict):
-
+def beam_decode(w2v_model, model, max_len_x, max_len_y, min_dec_length, beam_size, enc_inp, enc_extended_inp, enc_pad_mask, batch_oov_len, enc_oov_dict):
 
     def decode_onestep(dec_inp, dec_hidden, enc_output, enc_extended_inp,enc_pad_mask,batch_oov_len,coverage_ret=None):
         # dec_inp prediction from last step [beam_size,1], enc_extended_inp, enc_pad_mask [beam_size,max_len_x]
@@ -153,74 +149,70 @@ def beam_decode(w2v_model, max_len_y, min_dec_length, beam_size, enc_inp, enc_ex
     hyps_sorted = sorted(results, key=lambda h: h.avg_log_prob, reverse=True)
     best_hyp = hyps_sorted[0]
     best_hyp.abstract = token_to_word(w2v_model, best_hyp.tokens, [])
-    print(best_hyp.abstract)
     best_hyp.text = token_to_word(w2v_model, enc_inp[0], enc_oov_dict)
-    print(best_hyp.text)
     return best_hyp
 
 
-#########################################start here#########################################################
-w2v_model = Word2Vec.load('./word2vec.model')
-print('w2v model loaded')
-max_len_x = 103
-max_len_y = 40
-min_len_y = 5
+def predict(params):
+    w2v_model = Word2Vec.load('./word2vec.model')
+    print('w2v model loaded')
+    embedding_matrix = np.loadtxt('embedding_matrix.txt', dtype=np.float32)
+    print('embedding_matrix loaded')
 
-embedding_matrix = np.loadtxt('embedding_matrix.txt', dtype=np.float32)
-print('embedding_matrix loaded')
-beam_size = 3
-batch_sz = beam_size
+    max_len_x = params['max_lens'][3]
+    max_len_y = params['max_len_y']
+    min_len_y = params['min_len_y']
+    beam_size = params['beam_size']
+    batch_sz = beam_size
+    gru_units = params['gru_units']
+    att_units = params['att_units']
+    learning_rate = params['learning_rate']  # 0.001
+    clipvalue = params['clipvalue']  # 2.0
+    checkpoint_dir = params['checkpoint_dir']  # ./train_checkpoints
+    prediction_path = params['prediction_path']
 
-test_X = []
-test_X_oov = []
+    test_X = []
+    test_X_oov = []
+    with open('./data/test_X_pad.txt', 'r', encoding='utf-8') as f:
+        for line in f.readlines():
+            test_X.append(line.strip().split(' '))
+    f.close()
+    with open('./data/test_X_oov.txt', 'r', encoding='utf-8') as f:
+        for line in f.readlines():
+            test_X_oov.append(line.strip().split(' '))
+    f.close()
 
-with open('./data/test_X_pad.txt', 'r', encoding='utf-8') as f:
-    for line in f.readlines():
-        test_X.append(line.strip().split(' '))
-f.close()
-with open('./data/test_X_oov.txt', 'r', encoding='utf-8') as f:
-    for line in f.readlines():
-        test_X_oov.append(line.strip().split(' '))
-f.close()
+    # dataset_token, dataset_extended_token, dataset_pad_mask, dataset_oov_dict, dataset_oov_len
+    test_X_token, test_X_extended_token, test_X_pad_mask, test_X_oov_dict, test_X_oov_len = get_token(w2v_model, max_len_x, test_X, test_X_oov)
+    test_X_token, test_X_extended_token, test_X_pad_mask, test_X_oov_len = tf.convert_to_tensor(test_X_token), \
+                                                                           tf.convert_to_tensor(test_X_extended_token), \
+                                                                           tf.convert_to_tensor(test_X_pad_mask), \
+                                                                           tf.convert_to_tensor(test_X_oov_len)
+    dataset = tf.data.Dataset.from_tensor_slices((test_X_token, test_X_extended_token, test_X_pad_mask, test_X_oov_len))
+    dataset_batch = dataset.batch(batch_size=1, drop_remainder=True)
+    dataset_len = len(test_X_token)
+    dataset_oov_dict = test_X_oov_dict
 
+    model = PGN(gru_units, att_units, batch_sz, embedding_matrix)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, clipvalue=clipvalue)
+    checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
+    checkpoint = tf.train.Checkpoint(optimizer=optimizer, encoder=model.encoder, attention=model.attention,
+                                     decoder=model.decoder, pointer=model.pointer)
+    status = checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
+    print('model restored')
 
-# dataset_token, dataset_extended_token, dataset_pad_mask, dataset_oov_dict, dataset_oov_len
-test_X_token, test_X_extended_token, test_X_pad_mask, test_X_oov_dict, test_X_oov_len = get_token(w2v_model, max_len_x, test_X, test_X_oov)
-test_X_token, test_X_extended_token, test_X_pad_mask, test_X_oov_len = tf.convert_to_tensor(test_X_token), \
-                                                                       tf.convert_to_tensor(test_X_extended_token), \
-                                                                       tf.convert_to_tensor(test_X_pad_mask), \
-                                                                       tf.convert_to_tensor(test_X_oov_len)
-dataset = tf.data.Dataset.from_tensor_slices((test_X_token, test_X_extended_token, test_X_pad_mask, test_X_oov_len))
-dataset_batch = dataset.batch(batch_size=1, drop_remainder=True)
-dataset_len = len(test_X_token)
-dataset_oov_dict = test_X_oov_dict
-
-gru_units = 512
-att_units = 64
-embedding_matrix = embedding_matrix
-
-model = PGN(gru_units, att_units, batch_sz, embedding_matrix)
-
-optimizer = tf.keras.optimizers.Adam(clipvalue=2.0)
-
-checkpoint_dir = './training_checkpoints'
-checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
-checkpoint = tf.train.Checkpoint(optimizer=optimizer, encoder=model.encoder, attention=model.attention,
-                                 decoder=model.decoder, pointer=model.pointer)
-
-status = checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
-# status.assert_consumed()
-print('model restored')
-
-res=[]
-for (batch, (enc, enc_extend, enc_mask, enc_oov_len)) in enumerate(dataset_batch.take(dataset_len)):
-    enc_oov_dict = dataset_oov_dict[batch:(batch + 1)]
-    print('decode sample {}'.format(batch+1))
-    ans = beam_decode(w2v_model, max_len_y, min_len_y, beam_size, enc, enc_extend, enc_mask, enc_oov_len, enc_oov_dict)
-    res.append([ans.text, ans.abstract])
-with open('./test_results.txt', 'w', encoding='utf-8') as f:
-    for line in res:
-        line = '|'.join(line)
-        f.write(line)
-        f.write('\n')
-    print('test results saved')
+    res = []
+    for (batch, (enc, enc_extend, enc_mask, enc_oov_len)) in enumerate(dataset_batch.take(dataset_len)):
+        enc_oov_dict = dataset_oov_dict[batch:(batch + 1)]
+        print('decode sample {}'.format(batch+1))
+        ans = beam_decode(w2v_model, model, max_len_x, max_len_y, min_len_y, beam_size, enc, enc_extend, enc_mask, enc_oov_len, enc_oov_dict)
+        res.append([ans.text, ans.abstract])
+        if (batch + 1) % 5 == 0:
+            print('text', ans.text)
+            print('abstract', ans.abstract)
+    with open(prediction_path, 'w', encoding='utf-8') as f:
+        for line in res:
+            line = '|'.join(line)
+            f.write(line)
+            f.write('\n')
+        print('test results saved')

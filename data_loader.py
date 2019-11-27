@@ -8,6 +8,7 @@ import numpy as np
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
+import os
 
 pd.set_option('display.max_columns', 1000)
 pd.set_option("display.max_colwidth", 1000)
@@ -166,13 +167,13 @@ def tfidf_filter(in_path, max_df, min_df, min_tfidf):
 
 #################END OF DATA PURGE & START OF VOCAB AND TONKENIZE#################
 
-def prepare_dataset(paths, max_lens):
+def prepare_dataset(paths, embedding_size,max_lens):
     #_, max_train_inp, max_train_out, max_test_inp = max_lens
     # train the word2vec model and obtain vocab without start end pad unk token
     merge, train_X, train_y, test_X = paths['after_segment']
     #_,train_X_oov, train_y_oov, test_X_oov = paths['dataset_oovs']
     print('start build w2v model')
-    w2v_model = Word2Vec(LineSentence(merge), size=256, negative=5, workers=4, iter=100, window=3, min_count=1)
+    w2v_model = Word2Vec(LineSentence(merge), size=embedding_size, negative=5, workers=4, iter=100, window=3, min_count=1)
     #w2v_model.save('./word2vec.model')
     #w2v_model = Word2Vec.load('./word2vec.model')
     print('finish build w2v model')
@@ -367,23 +368,40 @@ def batch(BATCH_SIZE, test_size, input, extended_input, input_pad_mask, input_oo
     return dataset_train_batch, dataset_test_batch, train_dataset_len, test_dataset_len, input_oov_train_dict, input_oov_test_dict
 
 
-def main():
+def pip_data(params):
+    data_dir = params['data_dir']
+    max_df = params['max_df']
+    min_df = params['min_df']
+    min_tfidf = params['min_tfidf']
+    embedding_size = params['embedding_size']
 
     paths = {
-    'train_path': './data/AutoMaster_TrainSet.csv',
-    'test_path': './data/AutoMaster_TestSet.csv',
-    'train_text_path': './data/train_text.txt',
-    'test_text_path' : './data/test_text.txt',
-    'train_X_path' : './data/train_X.txt',
-    'train_y_path' : './data/train_y.txt',
-    'test_X_path' : './data/test_X.txt',
-    'stop_words' : './data/stop_words.txt',
-    'train_test_merged_path':'./data/merged_train_test.txt',
-    'userdict_path':'./data/user_dict.txt',
-    'to_segment': ['./data/merged_train_test.txt','./data/train_X.txt','./data/train_y.txt','./data/test_X.txt'],
-    'after_segment': ['./data/merged_train_test_segment.txt','./data/train_X_segment.txt','./data/train_y_segment.txt','./data/test_X_segment.txt'],
-    'dataset_oovs': ['./data/merged_train_test_oov.txt','./data/train_X_oov.txt','./data/train_y_oov.txt','./data/test_X_oov.txt'],
-    'after_pad': ['./data/merged_train_test_pad.txt','./data/train_X_pad.txt','./data/train_y_pad.txt','./data/test_X_pad.txt']
+    'train_path': os.path.join(data_dir, 'AutoMaster_TrainSet.csv'),
+    'test_path': os.path.join(data_dir, 'AutoMaster_TestSet.csv'),
+    'train_text_path': os.path.join(data_dir, 'train_text.txt'),
+    'test_text_path' : os.path.join(data_dir, 'test_text.txt'),
+    'train_X_path' : os.path.join(data_dir, 'train_X.txt'),
+    'train_y_path' : os.path.join(data_dir, 'train_y.txt'),
+    'test_X_path' : os.path.join(data_dir, 'test_X.txt'),
+    'stop_words' : os.path.join(data_dir, 'stop_words.txt'),
+    'train_test_merged_path':os.path.join(data_dir, 'merged_train_test.txt'),
+    'userdict_path':os.path.join(data_dir, 'user_dict.txt'),
+    'to_segment': [os.path.join(data_dir, 'merged_train_test.txt'),
+                   os.path.join(data_dir, 'train_X.txt'),
+                   os.path.join(data_dir, 'train_y.txt'),
+                   os.path.join(data_dir, 'test_X.txt')],
+    'after_segment': [os.path.join(data_dir, 'merged_train_test_segment.txt'),
+                   os.path.join(data_dir, 'train_X_segment.txt'),
+                   os.path.join(data_dir, 'train_y_segment.txt'),
+                   os.path.join(data_dir, 'test_X_segment.txt')],
+    'dataset_oovs': [os.path.join(data_dir, 'merged_train_test_oov.txt'),
+                   os.path.join(data_dir, 'train_X_oov.txt'),
+                   os.path.join(data_dir, 'train_y_oov.txt'),
+                   os.path.join(data_dir, 'test_X_oov.txt')],
+    'after_pad': [os.path.join(data_dir, 'merged_train_test_pad.txt'),
+                   os.path.join(data_dir, 'train_X_pad.txt'),
+                   os.path.join(data_dir, 'train_y_pad.txt'),
+                   os.path.join(data_dir, 'test_X_pad.txt')],
 }
 
     data_generate(paths)
@@ -393,14 +411,13 @@ def main():
     # I am not sure max_lens really works. It do bypassed the oov problem.
     # tfidf_filter naively iterate every word in corpus, is extremely slow! !!!!!danger!!!!!! ~ 2 hour waiting
     # tfidf_filter overwrite the segment file, people can bypass this step and use segment file directly.
-    max_lens[0] = tfidf_filter('./data/merged_train_test_segment.txt', 0.75, 2, 0.1)  # 54225 -> 47792
-    max_lens[1] = tfidf_filter('./data/train_X_segment.txt', 0.75, 2, 0.1)  # 47488 -> 41661
-    max_lens[2] = tfidf_filter('./data/train_y_segment.txt', 0.75, 2, 0.1)   # 12279 -> 12267
-    max_lens[3] = tfidf_filter('./data/test_X_segment.txt', 0.75, 2, 0.1)  # 22356 -> 18673
+    for index, file_path in enumerate(paths['after_segment']):
+        max_lens[index] = tfidf_filter(file_path, max_df, min_df, min_tfidf)
+        #vocab merge 54225 -> 47792  train_X 47488 -> 41661  train_y 12279 -> 12267 test_X 22356 -> 18673
     print(max_lens)
     # max_lens = [98, 98, 32, 101]
-    w2v_model, max_lens = prepare_dataset(paths, max_lens)  # vocab_sz 53465 -> 53469
-    print(max_lens)  #  [98, 100, 34, 103]
+    w2v_model, max_lens = prepare_dataset(paths, embedding_size, max_lens)  # vocab_sz 53465 -> 53469
+    print('max lens:', max_lens)  #  [98, 100, 34, 103]
     w2v_model = Word2Vec.load('./word2vec.model')
     #max_lens = [241, 87, 29, 87]
 
@@ -458,5 +475,3 @@ def main():
 #     print (example_input_batch.shape, example_enc_extend.shape, example_oov_len.shape, example_target_batch.shape)
 #
 #
-if __name__ == '__main__':
-     main()
